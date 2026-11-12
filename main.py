@@ -3,6 +3,12 @@ import pandas as pd
 from llm_core import full_pipeline
 from crawler import run_full_crawler
 from clean_text import clean_dataframe
+# 读取Streamlit私密配置中的API密钥
+try:
+    import llm_core
+    llm_core.API_KEY = st.secrets["API_KEY"]
+except Exception:
+    pass
 
 st.set_page_config(page_title="AI应用场景智能挖掘与机会评估系统", layout="wide")
 st.title("AI应用场景智能挖掘与机会评估系统")
