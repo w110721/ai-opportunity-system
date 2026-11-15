@@ -89,7 +89,6 @@ with tab1:
         st.success("文件上传成功")
         st.dataframe(df_upload, use_container_width=True)
 
-with tab2:
    with tab2:
     st.subheader("单条文本需求研判")
     input_text = st.text_area("请输入待分析的文本内容", height=120)
@@ -158,7 +157,6 @@ with tab2:
                 fig_radar.update_layout(height=380)
                 st.plotly_chart(fig_radar, use_container_width=True)
 
-with tab3:
     with tab3:
     st.subheader("批量数据评估")
     if st.button("开始批量评估", type="primary"):
