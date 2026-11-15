@@ -219,16 +219,55 @@ with tab3:
             result_df = pd.DataFrame(results)
             st.session_state["result_df"] = result_df
 
-            st.divider()
+                       st.divider()
             st.markdown("#### 评估结果总览")
-            st.dataframe(result_df, use_container_width=True, height=420)
+            
+            # ========== 交互式筛选区 ==========
+            try:
+                col_filter1, col_filter2, col_filter3 = st.columns(3)
+                
+                # 筛选1：行业选择
+                with col_filter1:
+                    industry_list = ["全部"] + sorted(result_df["industry"].dropna().unique().tolist())
+                    selected_industry = st.selectbox("按行业筛选", industry_list)
+                
+                # 筛选2：机会等级
+                with col_filter2:
+                    level_list = ["全部", "S级", "A级", "B级", "C级"]
+                    selected_level = st.selectbox("按机会等级筛选", level_list)
+                
+                # 筛选3：得分区间
+                with col_filter3:
+                    min_score, max_score = st.slider("综合得分区间", 0.0, 10.0, (0.0, 10.0), step=0.5)
+                
+                # 执行筛选
+                filter_df = result_df.copy()
+                if selected_industry != "全部":
+                    filter_df = filter_df[filter_df["industry"] == selected_industry]
+                if selected_level != "全部":
+                    def map_level(s):
+                        if s >= 8.0: return "S级"
+                        elif s >= 6.5: return "A级"
+                        elif s >= 5.0: return "B级"
+                        else: return "C级"
+                    filter_df = filter_df[filter_df["total_score"].apply(map_level) == selected_level]
+                filter_df = filter_df[(filter_df["total_score"] >= min_score) & (filter_df["total_score"] <= max_score)]
+                
+                st.caption(f"筛选后共 {len(filter_df)} 条结果")
+                st.dataframe(filter_df, use_container_width=True, height=420)
+                
+            except Exception:
+                filter_df = result_df
+                st.dataframe(result_df, use_container_width=True, height=420)
+
 
             # ========== 可视化图表区 ==========
             st.divider()
             st.markdown("#### 可视化分析")
             
             # 过滤有效需求数据
-            valid_df = result_df[result_df["is_valid"] == "是"].copy()
+                        valid_df = filter_df[filter_df["is_valid"] == "是"].copy()
+
             
             try:
                 col_chart1, col_chart2 = st.columns([1, 1])
