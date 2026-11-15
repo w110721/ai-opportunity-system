@@ -219,7 +219,7 @@ with tab3:
             result_df = pd.DataFrame(results)
             st.session_state["result_df"] = result_df
 
-                       st.divider()
+            st.divider()
             st.markdown("#### 评估结果总览")
             
             # ========== 交互式筛选区 ==========
