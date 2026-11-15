@@ -141,21 +141,30 @@ with tab2:
                 st.divider()
                 st.markdown("#### 维度得分详情")
                 
-                # 三维雷达图
-                radar_data = pd.DataFrame({
-                    "维度": ["需求强度", "技术可行性", "商业价值潜力"],
-                    "得分": [
-                        result.get("score_demand", 0),
-                        result.get("score_feasibility", 0),
-                        result.get("score_value", 0)
-                    ]
-                })
-                fig_radar = px.line_polar(radar_data, r="得分", theta="维度",
-                                         line_close=True, range_r=[0,10],
-                                         color_discrete_sequence=["#1f77b4"],
-                                         fill="toself")
-                fig_radar.update_layout(height=380)
-                st.plotly_chart(fig_radar, use_container_width=True)
+                              # 三维雷达图
+                try:
+                    radar_data = pd.DataFrame({
+                        "维度": ["需求强度", "技术可行性", "商业价值潜力"],
+                        "得分": [
+                            float(result.get("score_demand", 0)),
+                            float(result.get("score_feasibility", 0)),
+                            float(result.get("score_value", 0))
+                        ]
+                    })
+                    fig_radar = px.line_polar(radar_data, r="得分", theta="维度",
+                                             line_close=True,
+                                             color_discrete_sequence=["#1f77b4"],
+                                             fill="toself")
+                    fig_radar.update_layout(
+                        height=380,
+                        polar=dict(
+                            radialaxis=dict(range=[0, 10])
+                        )
+                    )
+                    st.plotly_chart(fig_radar, use_container_width=True)
+                except Exception:
+                    st.info("雷达图渲染异常，可参考上方得分数据")
+
 
 with tab3:
     st.subheader("批量数据评估")
