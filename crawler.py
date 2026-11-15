@@ -92,15 +92,19 @@ def crawl_zhihu(keyword, max_count=10):
     return data_list
 
 def run_full_crawler():
-    keywords = ["AI 痛点", "AI 效率工具", "AI 应用需求", "AI 创业机会"]
+    keywords = ["AI文案生成", "AI智能客服", "AI数据分析", "AI办公自动化",
+        "AI教育辅导", "AI工业质检", "AI医疗辅助", "AI电商运营",
+        "AI代码助手", "AI设计作图", "AI语音转写", "AI内容审核",
+        "AI智能推荐", "AI运维监控", "AI供应链优化", "AI客户管理"]
     all_data = []
     
     for kw in keywords:
-        all_data.extend(crawl_bilibili(kw, 8))
-        all_data.extend(crawl_github(kw, 3))
-        all_data.extend(crawl_juejin(kw, 3))
-        all_data.extend(crawl_zhihu(kw, 3))
-    
+        all_data.extend(crawl_bilibili(kw, 12))
+        all_data.extend(crawl_github(kw, 12))
+        all_data.extend(crawl_juejin(kw, 12))
+        all_data.extend(crawl_zhihu(kw, 12))
+        time.sleep(0.8)
+
     df = pd.DataFrame(all_data)
     df = df.drop_duplicates(subset=["content"]).reset_index(drop=True)
     return df
