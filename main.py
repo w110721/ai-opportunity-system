@@ -13,9 +13,13 @@ from clean_text import clean_dataframe
 # 读取Streamlit私密配置中的API密钥
 try:
     import llm_core
-    llm_core.API_KEY = st.secrets["API_KEY"]
+    raw_key = st.secrets.get("API_KEY", "")
+    if raw_key and len(raw_key) > 20:
+        llm_core.API_KEY = raw_key
+    else:
+        llm_core.API_KEY = ""
 except Exception:
-    pass
+    llm_core.API_KEY = ""
 
 st.set_page_config(page_title="AI应用场景智能挖掘与机会评估系统", layout="wide")
 st.title("AI应用场景智能挖掘与机会评估系统")
@@ -86,10 +90,19 @@ with tab1:
     st.subheader("上传本地数据集")
     uploaded_file = st.file_uploader("上传CSV格式的数据集", type="csv")
     if uploaded_file is not None:
-        df_upload = pd.read_csv(uploaded_file)
-        st.session_state["clean_data"] = df_upload
-        st.success("文件上传成功")
-        st.dataframe(df_upload, use_container_width=True)
+        if uploaded_file.size > 10 * 1024 * 1024:
+            st.error("文件过大，仅支持10MB以内的CSV文件")
+        else:
+            try:
+                df_upload = pd.read_csv(uploaded_file, nrows=2000)
+                if len(df_upload.columns) == 0:
+                    st.error("CSV文件格式无效，请检查文件")
+                else:
+                    st.session_state["clean_data"] = df_upload
+                    st.success(f"文件上传成功，共 {len(df_upload)} 条数据")
+                    st.dataframe(df_upload, use_container_width=True)
+            except Exception as e:
+                st.error("文件解析失败，请确认是标准CSV格式")
 
 
 with tab2:
@@ -171,7 +184,13 @@ with tab2:
 
 with tab3:
     st.subheader("批量数据评估")
-    if st.button("开始批量评估", type="primary"):
+    col_btn1, col_btn2 = st.columns(2)
+    with col_btn1:
+        run_quick = st.button("快速演示评估（前200条）", type="primary")
+    with col_btn2:
+        run_full = st.button("全量深度评估（全部数据）")
+    
+    if run_quick or run_full:
         df = st.session_state.get("clean_data")
         if df is None:
             df = st.session_state.get("raw_data")
@@ -179,11 +198,19 @@ with tab3:
             st.warning("请先在「数据采集与清洗」页采集数据，或上传本地数据集")
         else:
             total = len(df)
-            # 总量上限防护，防止海量数据崩溃
-            if total > 1500:
-                st.warning("数据量过大，建议分批处理，本次仅评估前1500条")
-                df = df.head(1500)
-                total = 1500
+            # 快速演示模式：仅评估前200条
+            if run_quick:
+                max_eval = 200
+                if total > max_eval:
+                    st.info(f"快速演示模式，仅评估前 {max_eval} 条数据")
+                    df = df.head(max_eval)
+                    total = max_eval
+            # 全量深度模式
+            else:
+                if total > 1500:
+                    st.warning("数据量过大，建议分批处理，本次仅评估前1500条")
+                    df = df.head(1500)
+                    total = 1500
             
             results = []
             progress_bar = st.progress(0)
@@ -195,7 +222,7 @@ with tab3:
                     res = full_pipeline(text)
                     results.append(res)
                 except Exception:
-                    # 单条异常全兜底，绝不中断整体流程
+                    # 单条异常全兜底
                     results.append({
                         "is_valid": "处理失败",
                         "desc": text[:30],
@@ -213,12 +240,32 @@ with tab3:
                 progress_bar.progress(current / total)
                 status_text.text(f"正在处理：{current} / {total} 条")
                 
-                # 每15条限流暂停
-                if current % 15 == 0:
-                    time.sleep(0.3)
+                # 每10条限流暂停
+                if current % 10 == 0:
+                    time.sleep(0.8)
             
             status_text.text(f"处理完成，共 {total} 条")
             result_df = pd.DataFrame(results)
+
+            # ========== 计算数据可信度等级 ==========
+            try:
+                channel_cnt = result_df.groupby("content")["source"].nunique().reset_index()
+                channel_cnt.columns = ["content", "channel_num"]
+                result_df = result_df.merge(channel_cnt, on="content", how="left")
+                
+                def map_reliability(num):
+                    if num >= 3:
+                        return "高可信"
+                    elif num == 2:
+                        return "中可信"
+                    else:
+                        return "低可信"
+                
+                result_df["可信度"] = result_df["channel_num"].apply(map_reliability)
+                result_df = result_df.drop(columns=["channel_num"])
+            except Exception:
+                result_df["可信度"] = "低可信"
+
             st.session_state["result_df"] = result_df
 
             st.divider()
@@ -226,7 +273,7 @@ with tab3:
             
             # ========== 交互式筛选区 ==========
             try:
-                col_filter1, col_filter2, col_filter3 = st.columns(3)
+                col_filter1, col_filter2, col_filter3, col_filter4 = st.columns(4)
                 
                 # 筛选1：行业选择
                 with col_filter1:
@@ -241,6 +288,11 @@ with tab3:
                 # 筛选3：得分区间
                 with col_filter3:
                     min_score, max_score = st.slider("综合得分区间", 0.0, 10.0, (0.0, 10.0), step=0.5)
+
+                # 筛选4：可信度
+                with col_filter4:
+                    rel_list = ["全部", "高可信", "中可信", "低可信"]
+                    selected_rel = st.selectbox("按可信度筛选", rel_list)
                 
                 # 执行筛选
                 filter_df = result_df.copy()
@@ -253,14 +305,38 @@ with tab3:
                         elif s >= 5.0: return "B级"
                         else: return "C级"
                     filter_df = filter_df[filter_df["total_score"].apply(map_level) == selected_level]
+                if selected_rel != "全部":
+                    filter_df = filter_df[filter_df["可信度"] == selected_rel]
                 filter_df = filter_df[(filter_df["total_score"] >= min_score) & (filter_df["total_score"] <= max_score)]
                 
                 st.caption(f"筛选后共 {len(filter_df)} 条结果")
-                st.dataframe(filter_df, use_container_width=True, height=420)
+                st.dataframe(filter_df, use_container_width=True, height=320)
                 
             except Exception:
                 filter_df = result_df
-                st.dataframe(result_df, use_container_width=True, height=420)
+                st.dataframe(result_df, use_container_width=True, height=320)
+
+            # ========== TOP10 重点落地机会榜单 ==========
+            st.divider()
+            st.markdown("#### 🏆 重点落地机会TOP10")
+            try:
+                top_df = filter_df[filter_df["is_valid"] == "是"].sort_values("total_score", ascending=False).head(10)
+                if not top_df.empty:
+                    for i, row in top_df.reset_index(drop=True).iterrows():
+                        level = "S级" if row["total_score"]>=8 else ("A级" if row["total_score"]>=6.5 else "B级")
+                        with st.expander(f"TOP{i+1} | {row['industry']} | 综合得分：{row['total_score']:.1f} | {row['可信度']} | {level}"):
+                            col_a, col_b = st.columns([2, 1])
+                            with col_a:
+                                st.write(f"**需求描述**：{row.get('desc', '-')}")
+                                st.write(f"**核心痛点**：{row.get('pain_point', '-')}")
+                                st.write(f"**匹配AI能力**：{row.get('ai_ability', '-')}")
+                            with col_b:
+                                st.metric("机会等级", level)
+                                st.write(f"**评估结论**：{row.get('conclusion', '-')}")
+                else:
+                    st.info("暂无符合条件的高价值需求")
+            except Exception:
+                st.info("机会榜单生成异常")
 
             # ========== 可视化图表区 ==========
             st.divider()
@@ -310,7 +386,6 @@ with tab3:
                                                 size="样本量", color="行业",
                                                 title="价值-可行性四象限矩阵",
                                                 size_max=30)
-                        # 添加四象限分割虚线
                         fig_scatter.add_hline(y=5, line_dash="dash", line_color="gray")
                         fig_scatter.add_vline(x=5, line_dash="dash", line_color="gray")
                         fig_scatter.update_layout(showlegend=False)
@@ -402,14 +477,77 @@ with tab3:
                 st.info("图表渲染异常，可查看下方表格数据")
 
             st.divider()
-            # 导出CSV结果
-            csv = result_df.to_csv(index=False).encode("utf-8-sig")
-            st.download_button(
-                label="下载评估结果CSV",
-                data=csv,
-                file_name="AI应用机会评估结果.csv",
-                mime="text/csv"
-            )
+            st.markdown("#### 📁 竞赛结果文件导出")
+            col_exp1, col_exp2, col_exp3, col_exp4 = st.columns(4)
+
+            # result1.csv 原始采集数据
+            with col_exp1:
+                try:
+                    raw_df = st.session_state.get("raw_data", pd.DataFrame())
+                    csv1 = raw_df.to_csv(index=False).encode("utf-8-sig") if not raw_df.empty else b""
+                    st.download_button(
+                        label="下载 result1.csv",
+                        data=csv1,
+                        file_name="result1.csv",
+                        mime="text/csv",
+                        disabled=raw_df.empty
+                    )
+                    st.caption("原始采集全量数据")
+                except Exception:
+                    st.button("下载 result1.csv", disabled=True)
+
+            # result2.csv 清洗后数据集
+            with col_exp2:
+                try:
+                    clean_df = st.session_state.get("clean_data", pd.DataFrame())
+                    csv2 = clean_df.to_csv(index=False).encode("utf-8-sig") if not clean_df.empty else b""
+                    st.download_button(
+                        label="下载 result2.csv",
+                        data=csv2,
+                        file_name="result2.csv",
+                        mime="text/csv",
+                        disabled=clean_df.empty
+                    )
+                    st.caption("去重清洗后数据集")
+                except Exception:
+                    st.button("下载 result2.csv", disabled=True)
+
+            # result3.csv 全量评估明细
+            with col_exp3:
+                csv3 = result_df.to_csv(index=False).encode("utf-8-sig")
+                st.download_button(
+                    label="下载 result3.csv",
+                    data=csv3,
+                    file_name="result3.csv",
+                    mime="text/csv"
+                )
+                st.caption("全量评估明细结果")
+
+            # result4.csv 聚合统计结果
+            with col_exp4:
+                try:
+                    if not valid_df.empty:
+                        stat_df = valid_df.groupby("industry").agg(
+                            样本量=("total_score", "count"),
+                            平均综合得分=("total_score", "mean"),
+                            平均需求强度=("score_demand", "mean"),
+                            平均技术可行性=("score_feasibility", "mean"),
+                            平均商业价值=("score_value", "mean")
+                        ).reset_index()
+                        stat_df = stat_df.sort_values("平均综合得分", ascending=False)
+                        csv4 = stat_df.to_csv(index=False).encode("utf-8-sig")
+                    else:
+                        csv4 = b""
+                    st.download_button(
+                        label="下载 result4.csv",
+                        data=csv4,
+                        file_name="result4.csv",
+                        mime="text/csv",
+                        disabled=valid_df.empty
+                    )
+                    st.caption("行业维度聚合统计")
+                except Exception:
+                    st.button("下载 result4.csv", disabled=True)
 
 
 with tab4:
@@ -454,3 +592,10 @@ with tab4:
     st.write("1. **数据来源**：哔哩哔哩、知乎、掘金、GitHub 四大平台公开可访问的话题、帖子、评论内容，仅用于学术研究。")
     st.write("2. **交叉验证**：同一需求在多渠道均有提及，判定为高可信需求；单平台出现的需求标注为局部参考。")
     st.write("3. **局限性**：结论基于公开渠道样本，反映当前技术阶段下的行业普遍认知，存在时效性与样本偏差，不构成投资或商业建议。")
+
+    st.divider()
+    st.markdown("### 七、安全与合规说明")
+    st.write("1. **数据安全**：所有采集数据仅在内存中处理分析，不持久化存储用户隐私信息，导出功能由用户主动触发。")
+    st.write("2. **API安全**：密钥采用服务端私密存储，全程零日志、零输出、零泄露，接口调用限流兜底。")
+    st.write("3. **爬虫合规**：严格遵守各平台公开接口调用规范与robots协议，速率可控，仅采集公开可访问内容，仅用于学术研究。")
+    st.write("4. **内容安全**：系统自动过滤HTML标签与恶意内容，防范注入与XSS风险，保障页面运行安全。")
