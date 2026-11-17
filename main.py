@@ -184,6 +184,19 @@ with tab2:
 
 with tab3:
     st.subheader("批量数据评估")
+    
+    # 内置演示数据集加载
+    col_demo, col_ = st.columns([1, 3])
+    with col_demo:
+        if st.button("加载演示数据集（秒开）", type="secondary"):
+            try:
+                demo_df = pd.read_csv("demo_result.csv")
+                st.session_state["result_df"] = demo_df
+                st.success("演示数据集加载成功，下方图表与榜单已同步更新")
+            except Exception:
+                st.error("演示数据集文件不存在，请先上传 demo_result.csv")
+    st.divider()
+
     col_btn1, col_btn2 = st.columns(2)
     with col_btn1:
         run_quick = st.button("快速演示评估（前200条）", type="primary")
@@ -215,14 +228,28 @@ with tab3:
             results = []
             progress_bar = st.progress(0)
             status_text = st.empty()
+            fail_count = 0  # 连续失败计数器
             
             for idx, row in df.iterrows():
                 try:
                     text = str(row.iloc[0])
                     res = full_pipeline(text)
+                    
+                    # 判定是否为有效失败（得分0且行业未识别）
+                    if res.get("total_score", 0) == 0 and res.get("industry", "-") == "-":
+                        fail_count += 1
+                    else:
+                        fail_count = 0
+                    
+                    # 连续失败≥10条，主动终止
+                    if fail_count >= 10:
+                        status_text.text(f"API连续调用失败，已自动终止，已处理 {idx+1} 条")
+                        st.warning("连续10条评估失败，大概率为API密钥额度不足或接口配置错误，请检查后重试")
+                        break
+                    
                     results.append(res)
                 except Exception:
-                    # 单条异常全兜底
+                    fail_count += 1
                     results.append({
                         "is_valid": "处理失败",
                         "desc": text[:30],
@@ -235,16 +262,21 @@ with tab3:
                         "total_score": 0,
                         "conclusion": "单条处理异常"
                     })
+                    
+                    if fail_count >= 10:
+                        status_text.text(f"API连续调用失败，已自动终止，已处理 {idx+1} 条")
+                        st.warning("连续10条评估失败，大概率为API密钥额度不足或接口配置错误，请检查后重试")
+                        break
                 
                 current = idx + 1
                 progress_bar.progress(current / total)
                 status_text.text(f"正在处理：{current} / {total} 条")
                 
-                # 每10条限流暂停
                 if current % 10 == 0:
                     time.sleep(0.8)
             
-            status_text.text(f"处理完成，共 {total} 条")
+            if fail_count < 10:
+                status_text.text(f"处理完成，共 {total} 条")
             result_df = pd.DataFrame(results)
 
             # ========== 计算数据可信度等级 ==========
@@ -340,10 +372,46 @@ with tab3:
 
             # ========== 可视化图表区 ==========
             st.divider()
-            st.markdown("#### 可视化分析")
             
             # 过滤有效需求数据
             valid_df = filter_df[filter_df["is_valid"] == "是"].copy()
+
+            # ========== 智能分析结论 ==========
+            st.markdown("#### 🧠 智能分析结论")
+            try:
+                if not valid_df.empty:
+                    top3_industry = valid_df.groupby("industry")["total_score"].mean().sort_values(ascending=False).head(3).index.tolist()
+                    s_count = len(valid_df[valid_df["total_score"] >= 8.0])
+                    total_valid = len(valid_df)
+                    
+                    prompt = f"""
+                    基于以下AI应用场景评估数据，生成一段200-300字的分析结论，客观严谨：
+                    有效需求样本总量：{total_valid}条
+                    S级高价值需求数量：{s_count}条
+                    综合得分排名前三的行业：{('、'.join(top3_industry))}
+                    
+                    要求：
+                    1. 总结当前AI应用需求的整体分布特征
+                    2. 点明高价值落地方向及核心原因
+                    3. 给出落地优先级建议
+                    4. 不要分点，用连贯的段落表述
+                    """
+                    
+                    try:
+                        conclusion_res = full_pipeline(prompt)
+                        conclusion_text = conclusion_res.get("conclusion", "") or conclusion_res.get("desc", "")
+                        if len(conclusion_text) < 20:
+                            raise Exception("结果过短")
+                        st.write(conclusion_text)
+                    except Exception:
+                        st.info("智能结论生成异常，可查看下方图表与数据自行分析")
+                else:
+                    st.info("暂无有效数据，无法生成分析结论")
+            except Exception:
+                st.info("智能结论生成异常")
+
+            st.divider()
+            st.markdown("#### 可视化分析")
             
             try:
                 col_chart1, col_chart2 = st.columns([1, 1])
